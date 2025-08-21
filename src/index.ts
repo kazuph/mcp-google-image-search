@@ -22,40 +22,9 @@ try {
 // Store image search results for resource access
 const imageSearchResults = new Map<string, ImageSearchResult[]>();
 
-// Store registered resource names for cleanup
-const registeredImageResources = new Set<string>();
-
 // Generate unique resource ID for each search
 function generateSearchId(): string {
   return `search_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-}
-
-// Helper function to generate resource name for an image
-function generateImageResourceName(searchId: string, imageIndex: number): string {
-  return `image_${searchId}_${imageIndex}`;
-}
-
-// Helper function to clean up old image resources
-function cleanupOldImageResources() {
-  // Clean up resources older than 1 hour
-  const oneHourAgo = Date.now() - (60 * 60 * 1000);
-  
-  for (const resourceName of registeredImageResources) {
-    // Extract timestamp from resource name pattern: image_search_TIMESTAMP_RANDOM_INDEX
-    const match = resourceName.match(/^image_search_(\d+)_/);
-    if (match) {
-      const timestamp = parseInt(match[1], 10);
-      if (timestamp < oneHourAgo) {
-        try {
-          // Remove from MCP server (if such method exists)
-          registeredImageResources.delete(resourceName);
-          console.error(`[Cleanup] Removed old resource: ${resourceName}`);
-        } catch (error) {
-          console.error(`[Cleanup] Error removing resource ${resourceName}:`, error);
-        }
-      }
-    }
-  }
 }
 
 // Create MCP server
@@ -83,78 +52,26 @@ server.tool(
       const searchId = generateSearchId();
       imageSearchResults.set(searchId, results);
       
-      // Clean up old resources before registering new ones
-      cleanupOldImageResources();
-      
-      // Register each image as a separate MCP resource
-      const resourceLinks = results.map((image, index) => {
-        const resourceName = generateImageResourceName(searchId, index);
-        const resourceUri = `image://${searchId}/${index}`;
-        
-        // Register this specific image as a resource
-        server.registerResource(
-          resourceName,
-          resourceUri,
-          {
-            title: `${image.title} (Image ${index + 1})`,
-            description: `Image from ${image.source}: ${image.title}`,
-            mimeType: 'image/jpeg' // Will be determined dynamically in handler
-          },
-          async () => {
-            try {
-              console.error(`[Resource] Fetching image ${index} from: ${image.original}`);
-              const { data, mimeType } = await fetchImageAsBase64(image.original);
-              console.error(`[Resource] Image ${index} fetched successfully, mimeType: ${mimeType}, data length: ${data.length}`);
-              
-              return {
-                contents: [{
-                  uri: resourceUri,
-                  blob: data,
-                  mimeType: mimeType
-                }]
-              };
-            } catch (error: any) {
-              console.error(`[Error] Failed to fetch image ${index}:`, error);
-              throw error;
-            }
-          }
-        );
-        
-        // Track registered resource for cleanup
-        registeredImageResources.add(resourceName);
-        
-        // Return resource link for the tool response
-        return {
-          type: "resource_link",
-          uri: resourceUri,
-          name: `${image.title} (Image ${index + 1})`,
-          description: `Image from ${image.source}`,
-          mimeType: 'image/jpeg'
-        };
-      });
-      
-      // Add resource URIs to each image for backward compatibility
+      // Add resource URIs to each image
       const resultsWithResources = results.map((image, index) => ({
         ...image,
-        resourceUri: `image://${searchId}/${index}`,
-        resourceName: generateImageResourceName(searchId, index),
+        resourceUri: `image/${searchId}/${index}`,
         index: index
       }));
       
-      // Create content with resource links
+      // Create content with text and search results
       const content = [
         { 
           type: "text", 
-          text: `Found ${results.length} images for query "${query}". Each image is now available as a separate resource:` 
+          text: `Found ${results.length} images for query "${query}". Each image has a resourceUri that can be used to view the image.` 
         },
-        ...resourceLinks,
         {
           type: "text",
-          text: `\n✅ All ${results.length} images have been registered as individual MCP resources and should appear in your Claude Desktop resources panel.`
+          text: JSON.stringify(resultsWithResources, null, 2)
         }
       ];
       
-      console.error(`[Tool] Registered ${results.length} image resources for search ID: ${searchId}`);
+      console.error(`[Tool] Stored ${results.length} images for search ID: ${searchId}`);
       return { content } as any;
     } catch (error: any) {
       console.error("[Error] search_images failed:", error);
@@ -276,12 +193,65 @@ server.tool(
   }
 );
 
-// Set up periodic cleanup of old image resources
-setInterval(() => {
-  cleanupOldImageResources();
-}, 15 * 60 * 1000); // Clean up every 15 minutes
+// Add MCP resource handler for image display
+server.resource(
+  "image_resource",
+  "image/{searchId}/{imageIndex}",
+  async (uri: URL) => {
+    try {
+      const uriString = uri.toString();
+      console.error(`[Resource] Requested URI: ${uriString}`);
+      console.error(`[Resource] URI pathname: ${uri.pathname}`);
+      
+      // Parse the URI to extract searchId and imageIndex
+      const pathname = uri.pathname || uriString;
+      const match = pathname.match(/image\/([^\/]+)\/(\d+)$/);
+      console.error(`[Resource] Pattern match result: ${match ? 'found' : 'not found'}`);
+      if (!match) {
+        console.error(`[Resource] Failed to match pattern 'image/{searchId}/{imageIndex}' in: ${pathname}`);
+        throw new Error(`Invalid resource URI format: ${pathname}`);
+      }
+      
+      const [, searchId, imageIndexStr] = match;
+      const imageIndex = parseInt(imageIndexStr, 10);
+      
+      // Find the search results
+      const searchResults = imageSearchResults.get(searchId);
+      if (!searchResults) {
+        throw new Error("Search results not found or expired");
+      }
+      
+      // Get the specific image
+      const image = searchResults[imageIndex];
+      if (!image) {
+        throw new Error("Image not found in search results");
+      }
+      
+      // Fetch image data as Base64
+      console.error(`[Resource] Fetching image from: ${image.original}`);
+      const { data, mimeType } = await fetchImageAsBase64(image.original);
+      console.error(`[Resource] Image fetched successfully, mimeType: ${mimeType}, data length: ${data.length}`);
+      
+      const result = {
+        contents: [
+          {
+            blob: data,  // Base64 string
+            uri: uriString,
+            mimeType
+          }
+        ]
+      };
+      
+      console.error(`[Resource] Returning result with ${result.contents.length} contents`);
+      return result;
+    } catch (error: any) {
+      console.error(`[Error] Resource handler failed for ${uri}:`, error);
+      throw error;
+    }
+  }
+);
 
-console.error("[Setup] Image resource cleanup scheduled every 15 minutes");
+console.error("[Setup] MCP resource handler configured");
 
 // Start server
 async function main() {
