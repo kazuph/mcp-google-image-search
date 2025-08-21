@@ -30,10 +30,12 @@ describe('Google Image Search MCP Server', () => {
       fs.mkdirSync(downloadDir, { recursive: true });
     }
     
-    // SERP_API_KEYの確認
-    if (!process.env.SERP_API_KEY) {
-      console.warn('SERP_API_KEY not found. Setting a placeholder for testing.');
-      process.env.SERP_API_KEY = 'test-key';
+    // APIキーの確認 - プレースホルダーは使用しない
+    const hasGoogleAPI = process.env.GOOGLE_API_KEY && process.env.GOOGLE_CSE_ID;
+    const hasSerpAPI = process.env.SERP_API_KEY;
+    
+    if (!hasGoogleAPI && !hasSerpAPI) {
+      console.warn('No valid API keys found. Real API tests will be skipped.');
     }
   });
   
@@ -54,6 +56,15 @@ describe('Google Image Search MCP Server', () => {
   
   describe('Image Search and Download with Vision Verification', () => {
     test('should search and download Komatsu IoT case study images', async () => {
+      // APIキーがない場合はテストをスキップ
+      const hasGoogleAPI = process.env.GOOGLE_API_KEY && process.env.GOOGLE_CSE_ID;
+      const hasSerpAPI = process.env.SERP_API_KEY;
+      
+      if (!hasGoogleAPI && !hasSerpAPI) {
+        console.log('Skipping real API test - no valid API keys found');
+        return;
+      }
+      
       // 1. 「コマツ IoT 事例」で画像検索
       const searchResults = await searchImages('コマツ IoT 事例', 5);
       expect(searchResults).toBeDefined();
@@ -110,6 +121,15 @@ describe('Google Image Search MCP Server', () => {
     });
     
     test('should validate search results structure', async () => {
+      // APIキーがない場合はテストをスキップ
+      const hasGoogleAPI = process.env.GOOGLE_API_KEY && process.env.GOOGLE_CSE_ID;
+      const hasSerpAPI = process.env.SERP_API_KEY;
+      
+      if (!hasGoogleAPI && !hasSerpAPI) {
+        console.log('Skipping real API test - no valid API keys found');
+        return;
+      }
+      
       const searchResults = await searchImages('test query', 3);
       
       if (searchResults.length > 0) {

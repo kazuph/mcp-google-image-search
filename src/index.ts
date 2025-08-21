@@ -199,12 +199,17 @@ server.resource(
   async (uri: URL) => {
     try {
       const uriString = uri.toString();
-      console.error(`[Resource] Requested: ${uriString}`);
+      console.error(`[Resource] Requested URI: ${uriString}`);
+      console.error(`[Resource] URI type: ${typeof uri}`);
+      console.error(`[Resource] URI pathname: ${uri.pathname}`);
       
-      // Parse the URI to extract searchId and imageIndex
-      const match = uriString.match(/image\/([^\/]+)\/(\d+)$/);
+      // Parse the URI to extract searchId and imageIndex - use pathname for better matching
+      const pathname = uri.pathname || uriString;
+      const match = pathname.match(/image\/([^\/]+)\/(\d+)$/);
+      console.error(`[Resource] Pattern match result: ${match ? 'found' : 'not found'}`);
       if (!match) {
-        throw new Error("Invalid resource URI format");
+        console.error(`[Resource] Failed to match pattern 'image/{searchId}/{imageIndex}' in: ${pathname}`);
+        throw new Error(`Invalid resource URI format: ${pathname}`);
       }
       
       const [, searchId, imageIndexStr] = match;
@@ -222,12 +227,12 @@ server.resource(
         throw new Error("Image not found in search results");
       }
       
-      console.error(`[Resource] Fetching image: ${image.original}`);
-      
       // Fetch image data as Base64
+      console.error(`[Resource] Fetching image from: ${image.original}`);
       const { data, mimeType } = await fetchImageAsBase64(image.original);
+      console.error(`[Resource] Image fetched successfully, mimeType: ${mimeType}, data length: ${data.length}`);
       
-      return {
+      const result = {
         contents: [
           {
             blob: data,  // Base64 string
@@ -236,6 +241,9 @@ server.resource(
           }
         ]
       };
+      
+      console.error(`[Resource] Returning result with ${result.contents.length} contents`);
+      return result;
     } catch (error: any) {
       console.error(`[Error] Resource handler failed for ${uri}:`, error);
       throw error;
