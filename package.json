@@ -1,9 +1,12 @@
 {
   "name": "@kazuph/mcp-google-image-search",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "MCP server for Google Image Search with support for both Google Custom Search API and SerpAPI",
   "main": "dist/index.js",
   "type": "module",
+  "bin": {
+    "mcp-google-image-search": "./dist/index.js"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
