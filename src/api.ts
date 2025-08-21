@@ -251,6 +251,70 @@ export function calculateRelevanceScore(image: ImageSearchResult, criteria: stri
 }
 
 /**
+ * Detect image format from binary data using magic bytes/file signatures
+ */
+function detectImageFormat(buffer: Buffer): { extension: string; mimeType: string } | null {
+  // Check for various image format signatures
+  
+  // JPEG: FF D8 FF
+  if (buffer.length >= 3 && buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
+    return { extension: 'jpg', mimeType: 'image/jpeg' };
+  }
+  
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (buffer.length >= 8 && 
+      buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47 &&
+      buffer[4] === 0x0D && buffer[5] === 0x0A && buffer[6] === 0x1A && buffer[7] === 0x0A) {
+    return { extension: 'png', mimeType: 'image/png' };
+  }
+  
+  // GIF87a or GIF89a: 47 49 46 38 37 61 or 47 49 46 38 39 61
+  if (buffer.length >= 6 && 
+      buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x38 &&
+      (buffer[4] === 0x37 || buffer[4] === 0x39) && buffer[5] === 0x61) {
+    return { extension: 'gif', mimeType: 'image/gif' };
+  }
+  
+  // WebP: 52 49 46 46 ... 57 45 42 50
+  if (buffer.length >= 12 && 
+      buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+      buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) {
+    return { extension: 'webp', mimeType: 'image/webp' };
+  }
+  
+  // BMP: 42 4D
+  if (buffer.length >= 2 && buffer[0] === 0x42 && buffer[1] === 0x4D) {
+    return { extension: 'bmp', mimeType: 'image/bmp' };
+  }
+  
+  // ICO: 00 00 01 00
+  if (buffer.length >= 4 && 
+      buffer[0] === 0x00 && buffer[1] === 0x00 && buffer[2] === 0x01 && buffer[3] === 0x00) {
+    return { extension: 'ico', mimeType: 'image/x-icon' };
+  }
+  
+  // TIFF (Intel): 49 49 2A 00
+  if (buffer.length >= 4 && 
+      buffer[0] === 0x49 && buffer[1] === 0x49 && buffer[2] === 0x2A && buffer[3] === 0x00) {
+    return { extension: 'tiff', mimeType: 'image/tiff' };
+  }
+  
+  // TIFF (Motorola): 4D 4D 00 2A
+  if (buffer.length >= 4 && 
+      buffer[0] === 0x4D && buffer[1] === 0x4D && buffer[2] === 0x00 && buffer[3] === 0x2A) {
+    return { extension: 'tiff', mimeType: 'image/tiff' };
+  }
+  
+  // SVG: Check for XML declaration and svg tag (text-based format)
+  const textContent = buffer.toString('utf8', 0, Math.min(buffer.length, 1000));
+  if (textContent.includes('<svg') && (textContent.includes('xmlns="http://www.w3.org/2000/svg"') || textContent.includes("xmlns='http://www.w3.org/2000/svg'"))) {
+    return { extension: 'svg', mimeType: 'image/svg+xml' };
+  }
+  
+  return null;
+}
+
+/**
  * Validate if the URL is safe for downloading
  */
 function isValidImageUrl(url: string): boolean {
@@ -302,7 +366,7 @@ function sanitizeFilePath(outputPath: string, filename: string): string {
 }
 
 /**
- * Fetch image data as Base64 for MCP resource usage
+ * Fetch image data as Base64 for MCP resource usage with auto-format detection
  */
 export async function fetchImageAsBase64(imageUrl: string): Promise<{
   data: string;
@@ -322,23 +386,26 @@ export async function fetchImageAsBase64(imageUrl: string): Promise<{
       maxRedirects: 3
     });
     
-    // Determine MIME type from headers or URL
-    let mimeType = response.headers['content-type'] || 'image/jpeg';
-    if (!mimeType.startsWith('image/')) {
-      // Fallback based on URL extension
-      if (imageUrl.toLowerCase().includes('.png')) {
-        mimeType = 'image/png';
-      } else if (imageUrl.toLowerCase().includes('.gif')) {
-        mimeType = 'image/gif';
-      } else if (imageUrl.toLowerCase().includes('.webp')) {
-        mimeType = 'image/webp';
-      } else {
+    const imageBuffer = Buffer.from(response.data);
+    
+    // Detect the actual image format from binary data
+    const detectedFormat = detectImageFormat(imageBuffer);
+    let mimeType: string;
+    
+    if (detectedFormat) {
+      mimeType = detectedFormat.mimeType;
+      console.error(`[API] Auto-detected image format: ${mimeType}`);
+    } else {
+      // Fallback to header-based detection or default
+      mimeType = response.headers['content-type'] || 'image/jpeg';
+      if (!mimeType.startsWith('image/')) {
         mimeType = 'image/jpeg';
       }
+      console.error(`[API] Could not detect format from binary data, using: ${mimeType}`);
     }
     
     // Convert to Base64
-    const base64Data = Buffer.from(response.data).toString('base64');
+    const base64Data = imageBuffer.toString('base64');
     
     return {
       data: base64Data,
@@ -351,12 +418,12 @@ export async function fetchImageAsBase64(imageUrl: string): Promise<{
 }
 
 /**
- * Download an image to the specified directory (secure implementation)
+ * Download an image to the specified directory (secure implementation with auto-format detection)
  */
 export async function downloadImage(
   imageUrl: string, 
   outputPath: string, 
-  filename: string
+  baseFilename: string
 ): Promise<string> {
   console.error(`[API] Downloading image from: ${imageUrl}`);
   
@@ -376,34 +443,36 @@ export async function downloadImage(
       fs.mkdirSync(expandedOutputPath, { recursive: true });
     }
     
-    // Sanitize file path to prevent directory traversal
-    const fullPath = sanitizeFilePath(expandedOutputPath, filename);
-    
-    // Download using axios (secure alternative to curl)
+    // First download the image to buffer to detect format
     const response = await axios.get(imageUrl, { 
-      responseType: 'stream',
+      responseType: 'arraybuffer',
       timeout: 30000,
       maxRedirects: 5,
       maxContentLength: 50 * 1024 * 1024 // 50MB limit
     });
     
-    // Write to file using stream
-    const writer = fs.createWriteStream(fullPath);
-    response.data.pipe(writer);
+    const imageBuffer = Buffer.from(response.data);
     
-    return new Promise((resolve, reject) => {
-      writer.on('finish', () => {
-        console.error(`[API] Image downloaded successfully to: ${fullPath}`);
-        resolve(fullPath);
-      });
-      writer.on('error', (error) => {
-        // Clean up failed download
-        if (fs.existsSync(fullPath)) {
-          fs.unlinkSync(fullPath);
-        }
-        reject(error);
-      });
-    });
+    // Detect the actual image format from binary data
+    const detectedFormat = detectImageFormat(imageBuffer);
+    if (!detectedFormat) {
+      throw new Error('Unable to detect image format from downloaded data');
+    }
+    
+    console.error(`[API] Detected image format: ${detectedFormat.mimeType} (${detectedFormat.extension})`);
+    
+    // Generate filename with correct extension
+    const cleanBaseFilename = baseFilename.replace(/\.[^/.]+$/, ''); // Remove any existing extension
+    const finalFilename = `${cleanBaseFilename}.${detectedFormat.extension}`;
+    
+    // Sanitize file path to prevent directory traversal
+    const fullPath = sanitizeFilePath(expandedOutputPath, finalFilename);
+    
+    // Write the buffer to file
+    fs.writeFileSync(fullPath, imageBuffer);
+    
+    console.error(`[API] Image downloaded successfully to: ${fullPath}`);
+    return fullPath;
   } catch (error) {
     console.error("[Error] Failed to download image:", error);
     throw error;

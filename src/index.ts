@@ -92,24 +92,24 @@ server.tool(
 // Add download image tool
 server.tool(
   "download_image",
-  "Download an image to a local directory",
+  "Download an image to a local directory with automatic format detection and correct extension",
   {
     imageUrl: z.string().describe("URL of the image to download"),
     outputPath: z.string().describe("Directory path where the image should be saved"),
-    filename: z.string().describe("Filename for the downloaded image (including extension)")
+    baseFilename: z.string().describe("Base filename for the downloaded image (without extension - correct extension will be auto-detected)")
   },
   async (args, _extra) => {
     try {
-      const { imageUrl, outputPath, filename } = args;
+      const { imageUrl, outputPath, baseFilename } = args;
       
       console.error(`[Tool] Executing download_image for URL: ${imageUrl}`);
-      const savedPath = await downloadImage(imageUrl, outputPath, filename);
+      const savedPath = await downloadImage(imageUrl, outputPath, baseFilename);
       
       return {
         content: [
           { 
             type: "text", 
-            text: `Image successfully downloaded to: ${savedPath}` 
+            text: `Image successfully downloaded with auto-detected format to: ${savedPath}` 
           }
         ]
       };
