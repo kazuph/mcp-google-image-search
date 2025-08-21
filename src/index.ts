@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { searchImages, downloadImage, calculateRelevanceScore } from "./api.js";
+import { searchImages, downloadImage, calculateRelevanceScore, fetchImageAsBase64, initializeApiConfig } from "./api.js";
 import { ImageSearchResult } from "./types.js";
 import dotenv from "dotenv";
 import { z } from "zod";
@@ -8,10 +8,23 @@ import { z } from "zod";
 // Load environment variables
 dotenv.config();
 
-// Validate API key
-if (!process.env.SERP_API_KEY) {
-  console.error("[Error] Missing SERP_API_KEY in environment variables");
+// Initialize API configuration
+try {
+  initializeApiConfig();
+} catch (error: any) {
+  console.error("[Error] API configuration failed:", error.message);
+  console.error("[Help] Please set either:");
+  console.error("  - GOOGLE_API_KEY + GOOGLE_CSE_ID (for Google Custom Search API)");
+  console.error("  - SERP_API_KEY (for SerpAPI)");
   process.exit(1);
+}
+
+// Store image search results for resource access
+const imageSearchResults = new Map<string, ImageSearchResult[]>();
+
+// Generate unique resource ID for each search
+function generateSearchId(): string {
+  return `search_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 
 // Create MCP server
@@ -35,18 +48,30 @@ server.tool(
       console.error(`[Tool] Executing search_images with query: "${query}", limit: ${limit}`);
       const results = await searchImages(query, limit);
       
-      return {
-        content: [
-          { 
-            type: "text", 
-            text: `Found ${results.length} images for query "${query}":` 
-          },
-          {
-            type: "text",
-            text: JSON.stringify(results, null, 2)
-          }
-        ]
-      };
+      // Generate unique search ID and store results
+      const searchId = generateSearchId();
+      imageSearchResults.set(searchId, results);
+      
+      // Add resource URIs to each image
+      const resultsWithResources = results.map((image, index) => ({
+        ...image,
+        resourceUri: `image/${searchId}/${index}`,
+        index: index
+      }));
+      
+      // Create content with both text and resource references
+      const content = [
+        { 
+          type: "text", 
+          text: `Found ${results.length} images for query "${query}". Each image has a resourceUri that can be used to view the image.` 
+        },
+        {
+          type: "text",
+          text: JSON.stringify(resultsWithResources, null, 2)
+        }
+      ];
+      
+      return { content } as any;
     } catch (error: any) {
       console.error("[Error] search_images failed:", error);
       return {
@@ -57,7 +82,7 @@ server.tool(
             text: `Failed to search for images: ${error.message}` 
           }
         ]
-      };
+      } as any;
     }
   }
 );
@@ -163,6 +188,57 @@ server.tool(
           }
         ]
       };
+    }
+  }
+);
+
+// Add MCP resource handler for image display
+server.resource(
+  "image_resource",
+  "image/{searchId}/{imageIndex}",
+  async (uri: URL) => {
+    try {
+      const uriString = uri.toString();
+      console.error(`[Resource] Requested: ${uriString}`);
+      
+      // Parse the URI to extract searchId and imageIndex
+      const match = uriString.match(/image\/([^\/]+)\/(\d+)$/);
+      if (!match) {
+        throw new Error("Invalid resource URI format");
+      }
+      
+      const [, searchId, imageIndexStr] = match;
+      const imageIndex = parseInt(imageIndexStr, 10);
+      
+      // Find the search results
+      const searchResults = imageSearchResults.get(searchId);
+      if (!searchResults) {
+        throw new Error("Search results not found or expired");
+      }
+      
+      // Get the specific image
+      const image = searchResults[imageIndex];
+      if (!image) {
+        throw new Error("Image not found in search results");
+      }
+      
+      console.error(`[Resource] Fetching image: ${image.original}`);
+      
+      // Fetch image data as Base64
+      const { data, mimeType } = await fetchImageAsBase64(image.original);
+      
+      return {
+        contents: [
+          {
+            blob: data,  // Base64 string
+            uri: uriString,
+            mimeType
+          }
+        ]
+      };
+    } catch (error: any) {
+      console.error(`[Error] Resource handler failed for ${uri}:`, error);
+      throw error;
     }
   }
 );
