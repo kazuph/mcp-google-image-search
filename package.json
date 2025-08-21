@@ -1,20 +1,46 @@
 {
-  "name": "google-image-search-mcp",
+  "name": "@kazuph/mcp-google-image-search",
   "version": "1.0.0",
-  "description": "MCP server for Google Image Search",
+  "description": "MCP server for Google Image Search with support for both Google Custom Search API and SerpAPI",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "ts-node --esm src/index.ts",
-    "test": "echo \"Error: no test specified\" && exit 0",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
     "lint": "eslint --ext .ts src/",
-    "format": "prettier --write \"src/**/*.ts\""
+    "format": "prettier --write \"src/**/*.ts\"",
+    "prepublishOnly": "npm run build"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "google-images",
+    "image-search",
+    "search-api",
+    "claude",
+    "ai",
+    "serpapi",
+    "custom-search"
+  ],
+  "author": "kazuph",
   "license": "ISC",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "LICENSE",
+    "package.json"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kazuph/mcp-google-image-search.git"
+  },
+  "homepage": "https://github.com/kazuph/mcp-google-image-search#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.8.0",
     "axios": "^1.8.4",
@@ -25,9 +51,11 @@
     "@types/node": "^22.14.0",
     "@typescript-eslint/eslint-plugin": "^7.5.0",
     "@typescript-eslint/parser": "^7.5.0",
+    "@vitest/ui": "^3.2.4",
     "eslint": "^8.57.0",
     "prettier": "^3.0.0",
     "ts-node": "^10.9.2",
-    "typescript": "^5.8.2"
+    "typescript": "^5.8.2",
+    "vitest": "^3.2.4"
   }
 }
